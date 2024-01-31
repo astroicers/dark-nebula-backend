@@ -1,0 +1,21 @@
+node_modules/
+
+dist/
+
+.env
+
+npm-debug.log*
+package-lock.json
+
+# Dockerfile
+# .dockerignore
+
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
+
+*.log
+*.tmp
+*.temp
