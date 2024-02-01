@@ -25,7 +25,7 @@ run:
 	else \
 		echo "Container does not exist. Continuing..."; \
 	fi
-	sudo docker run -itd --name dark-nebula-backend-container -v ./backend/src:/app/src -p 3000:3000 dark-nebula-backend-image
+	sudo docker run -itd --name dark-nebula-backend-container -v ./src:/app/src -p 3000:3000 dark-nebula-backend-image
 
 debug:
 	sudo docker exec -it dark-nebula-backend-container /bin/sh

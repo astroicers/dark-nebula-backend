@@ -4,7 +4,7 @@ const app = express();
 const port = 3000;
 
 app.get('/', (req, res) => {
-    res.send('Wellcome to Dark Nebula.');
+    res.send('<h1>Wellcome to Dark Nebula.</h1>');
 });
 
 app.listen(port, () => {
