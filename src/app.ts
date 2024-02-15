@@ -1,73 +1,75 @@
 import express from 'express';
-import { createClient } from 'redis';
-import axios, { AxiosError } from 'axios'; // 導入AxiosError類型
+import * as k8s from '@kubernetes/client-node';
+import { exec } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import yaml from 'js-yaml';
 
 const app = express();
 const port = 3000;
 
-// Redis客戶端配置
-const redisClient = createClient({
-  url: 'redis://192.168.50.133:30001', // 更改為您的Redis伺服器URL
-});
+const kc = new k8s.KubeConfig();
+kc.loadFromCluster();
+const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
 
-// 監聽Redis連接錯誤
-redisClient.on('error', (err) => {
-  console.error('Redis連接錯誤:', err);
-});
+const applyYaml = async (filePath: string) => {
+  const yamlContent = fs.readFileSync(filePath, 'utf8');
+  const json = yaml.load(yamlContent) as k8s.KubernetesObject;
+  const { kind, apiVersion } = json;
+  const spec = json as k8s.KubernetesObject;
 
-redisClient.connect();
+  const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+  spec.apiVersion = apiVersion;
+  spec.kind = kind;
 
-// Argo Workflow API配置
-const argoWorkflowApiUrl = 'http://192.168.50.133:2746/api/v1/workflows/default'; // 更改為您的Argo Workflow API URL和namespace
-
-app.get('/', (req, res) => {
-    res.send('<h1>Welcome to Dark Nebula.</h1>');
-});
-
-// 新增路由以觸發Workflow執行
-app.get('/trigger-workflow', async (req, res) => {
   try {
-    const key = 'web-fingerprint-scanning-6x8cj-wappalyzer-uploader-2821792403'; // 更改為您要從Redis讀取的鍵
-    const value = await redisClient.get(key);
-    
-    if (value === null) {
-      res.status(404).send('無法從Redis找到值');
-      return;
+      await client.create(spec);
+      console.log(`${kind} created successfully`);
+  } catch (err) {
+      console.error(`Failed to create ${kind}: ${err}`);
+  }
+};
+
+app.get('/clone-repo', (req, res) => {
+  const repoUrl = 'https://github.com/astroicers/dark-nebula.git'; // 修改為您的專案地址
+  const cloneDir = '/app/src/dark-nebula'; // 指定克隆目錄
+
+  exec(`git clone ${repoUrl} ${cloneDir}`, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return res.status(500).send('Failed to clone repository.');
     }
+    console.log(`stdout: ${stdout}`);
+    console.error(`stderr: ${stderr}`);
+    res.send('Repository cloned successfully.');
+  });
+});
 
-    const workflowPayload = {
-      metadata: {
-        generateName: 'network-scanning-', // 更改為您的Workflow名稱
-      },
-      spec: {
-        arguments: {
-          parameters: [
-            {
-              name: 'base-subdomain',
-              value: 'www.yahoo.com',
-            },
-          ],
-        },
-      },
-    };
+// debugging
+// fix the error of "k8s api call failed."
+app.get('/apply-workflows', async (req, res) => {
+  const workflowFolderPath = '/app/src/dark-nebula/workflows/subdomain-ping-check/';
+  const files = fs.readdirSync(workflowFolderPath);
 
-    const response = await axios.post(argoWorkflowApiUrl, workflowPayload, {
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    console.log('Workflow API 響應:', response.data);
-    res.send('Workflow已成功啟動');
+  try {
+    for (const file of files) {
+      const filePath = path.join(workflowFolderPath, file);
+      // if (filePath !== `${workflowFolderPath}subdomain-ping-check.yaml`) {
+      const fileContents = fs.readFileSync(filePath, 'utf8');
+      const resources = yaml.loadAll(fileContents) as k8s.KubernetesObject[];
+      for (const resource of resources) {
+        // 使用適當的API方法應用資源
+        // 這裡僅示範，請根據實際情況調整
+        applyYaml(resource as any)
+      }
+    }
+    res.send('Workflows applied successfully.');
   } catch (error) {
-    if (error && typeof error === 'object') {
-      const axiosError = error as AxiosError; // 透過類型斷言指定錯誤類型為AxiosError
-      console.error('發送到Argo Workflow API的請求錯誤:', axiosError.response ? axiosError.response.data : axiosError.message);
-    } else {
-      console.error('發送到Argo Workflow API的請求錯誤:', error);
-    }
-    res.status(500).send('執行Workflow時發生錯誤');
+    console.error(error);
+    res.status(500).send('Error applying workflows.');
   }
 });
 
 app.listen(port, () => {
-    console.log(`Server running on http://192.168.50.133:${port}`);
+  console.log(`Server running on http://0.0.0.0:${port}`);
 });
