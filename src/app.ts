@@ -19,7 +19,7 @@ async function initKubeClients() {
 
 async function applyYaml(filePath: string) {
   const { kubernetesObjectApi } = await initKubeClients();
-  const client = KubernetesObjectApi.makeApiClient(kubernetesObjectApi as any); // Add this line to initialize the 'client' variable
+  // const client = KubernetesObjectApi.makeApiClient(kubernetesObjectApi as any); // Add this line to initialize the 'client' variable
 
   const specString = await fs.readFile(filePath, 'utf8');
   const specs = yaml.loadAll(specString); // 假設您處理的是 V1Service 類型的對象
@@ -27,12 +27,17 @@ async function applyYaml(filePath: string) {
   for (const spec of specs) {
     if ((spec as any).metadata && typeof (spec as any).metadata.name === 'string') {
       try {
-        await client.read(spec as any);
+        await kubernetesObjectApi.read(spec as any);
         console.log(`Resource ${(spec as any).metadata.name} exists, updating...`);
-        await client.patch(spec as any);
+        await kubernetesObjectApi.patch(spec as any);
       } catch (error) {
-        console.log(`Resource ${(spec as any).metadata.name} does not exist, creating...`);
-        await client.create(spec as any);
+        if ((error as any).response && (error as any).response.statusCode === 404) {
+          console.log(`Resource ${(spec as any).metadata.name} does not exist, creating...`); // Fix: Access 'metadata' property of 'spec'
+          await kubernetesObjectApi.create(spec as any); // Fix: Assert type of 'spec' to any
+        } else {
+          // 處理其他可能的錯誤
+          console.error(`Error processing resource ${(spec as any).metadata.name}:`, error); // Fix: Access 'metadata' property of 'spec'
+        }
       }
     }
   }
