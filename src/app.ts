@@ -1,73 +1,84 @@
 import express from 'express';
-import * as k8s from '@kubernetes/client-node';
+import { KubeConfig, KubernetesObjectApi, CoreV1Api } from '@kubernetes/client-node';
 import { exec } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import yaml from 'js-yaml';
+import fs from 'fs/promises';
+import * as yaml from 'js-yaml';
+import * as path from 'path';
 
 const app = express();
 const port = 3000;
 
-const kc = new k8s.KubeConfig();
-kc.loadFromCluster();
-const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+async function initKubeClient() {
+  const kc = new KubeConfig();
+  kc.loadFromDefault();
+  const client = KubernetesObjectApi.makeApiClient(kc);
+  return client;
+}
 
-const applyYaml = async (filePath: string) => {
-  const yamlContent = fs.readFileSync(filePath, 'utf8');
-  const json = yaml.load(yamlContent) as k8s.KubernetesObject;
-  const { kind, apiVersion } = json;
-  const spec = json as k8s.KubernetesObject;
 
-  const client = k8s.KubernetesObjectApi.makeApiClient(kc);
-  spec.apiVersion = apiVersion;
-  spec.kind = kind;
+async function applyYaml(filePath: string) {
+  const { kubernetesObjectApi, coreV1Api }  = await initKubeClient();
+  const specString = await fs.readFile(filePath, 'utf8');
+  const specs = yaml.loadAll(specString); // 假設您處理的是 V1Service 類型的對象
 
-  try {
-      await client.create(spec);
-      console.log(`${kind} created successfully`);
-  } catch (err) {
-      console.error(`Failed to create ${kind}: ${err}`);
+  for (const spec of specs) {
+    if (spec.metadata && typeof spec.metadata.name === 'string') {
+      try {
+        await client.read(spec);
+        console.log(`Resource ${spec.metadata.name} exists, updating...`);
+        await client.patch(spec);
+      } catch (error) {
+        console.log(`Resource ${spec.metadata.name} does not exist, creating...`);
+        await client.create(spec);
+      }
+    }
   }
-};
+}
+// upper part have some error, need to fix
 
-app.get('/clone-repo', (req, res) => {
-  const repoUrl = 'https://github.com/astroicers/dark-nebula.git'; // 修改為您的專案地址
-  const cloneDir = '/app/src/dark-nebula'; // 指定克隆目錄
+// 路由設定
+app.get('/clone-repo', async (req, res) => {
+  const repoUrl = 'https://github.com/astroicers/dark-nebula.git';
+  const cloneDir = '/app/src/dark-nebula';
 
   exec(`git clone ${repoUrl} ${cloneDir}`, (error, stdout, stderr) => {
     if (error) {
-      console.error(`exec error: ${error}`);
+      console.error('exec error:', error);
       return res.status(500).send('Failed to clone repository.');
     }
-    console.log(`stdout: ${stdout}`);
-    console.error(`stderr: ${stderr}`);
+    console.log('stdout:', stdout);
+    console.error('stderr:', stderr);
     res.send('Repository cloned successfully.');
   });
 });
 
-// debugging
-// fix the error of "k8s api call failed."
 app.get('/apply-workflows', async (req, res) => {
   const workflowFolderPath = '/app/src/dark-nebula/workflows/subdomain-ping-check/';
-  const files = fs.readdirSync(workflowFolderPath);
-
   try {
+    const files = await fs.readdir(workflowFolderPath);
     for (const file of files) {
-      const filePath = path.join(workflowFolderPath, file);
-      // if (filePath !== `${workflowFolderPath}subdomain-ping-check.yaml`) {
-      const fileContents = fs.readFileSync(filePath, 'utf8');
-      const resources = yaml.loadAll(fileContents) as k8s.KubernetesObject[];
-      for (const resource of resources) {
-        // 使用適當的API方法應用資源
-        // 這裡僅示範，請根據實際情況調整
-        applyYaml(resource as any)
-      }
+      await applyYaml(path.join(workflowFolderPath, file));
     }
     res.send('Workflows applied successfully.');
   } catch (error) {
-    console.error(error);
+    console.error('Error applying workflows:', error);
     res.status(500).send('Error applying workflows.');
   }
+});
+
+app.get('/list-services', async (req, res) => {
+  const { coreV1Api } = await initKubeClient();
+  try {
+    const services = await coreV1Api.listNamespacedService('default');
+    res.json(services.body.items.map((svc: any) => ({ name: svc.metadata?.name, labels: svc.metadata?.labels }))); // 為 svc 指定類型 V1Service
+  } catch (error) {
+    console.error('Error listing services:', error);
+    res.status(500).send('Error listing services in default namespace.');
+  }
+});
+
+app.get('/', (req, res) => {
+  res.send('dark-nebula-backend');
 });
 
 app.listen(port, () => {
