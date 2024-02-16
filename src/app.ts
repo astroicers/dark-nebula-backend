@@ -1,5 +1,5 @@
 import express from 'express';
-import { KubeConfig, KubernetesObjectApi, CoreV1Api } from '@kubernetes/client-node';
+import { KubeConfig, KubernetesObjectApi, CoreV1Api, CustomObjectsApi } from '@kubernetes/client-node';
 import { exec } from 'child_process';
 import fs from 'fs/promises';
 import * as yaml from 'js-yaml';
@@ -13,31 +13,38 @@ async function initKubeClients() {
   kc.loadFromDefault();
   const kubernetesObjectApi = KubernetesObjectApi.makeApiClient(kc);
   const coreV1Api = kc.makeApiClient(CoreV1Api);
-  return { kubernetesObjectApi, coreV1Api };
+  const customObjectsApi = kc.makeApiClient(CustomObjectsApi);
+  return { kubernetesObjectApi, coreV1Api, customObjectsApi };
 }
 
 
 async function applyYaml(filePath: string) {
-  const { kubernetesObjectApi } = await initKubeClients();
-  // const client = KubernetesObjectApi.makeApiClient(kubernetesObjectApi as any); // Add this line to initialize the 'client' variable
+  const { customObjectsApi } = await initKubeClients();
 
   const specString = await fs.readFile(filePath, 'utf8');
-  const specs = yaml.loadAll(specString); // 假設您處理的是 V1Service 類型的對象
+  const specs = yaml.loadAll(specString);
 
   for (const spec of specs) {
-    if ((spec as any).metadata && typeof (spec as any).metadata.name === 'string') {
+    const metadata = (spec as any).metadata;
+    if (metadata && typeof metadata.name === 'string') {
+      const group = "argoproj.io"; // 替換為您的資源組
+      const version = "v1alpha1"; // 替換為您的資源版本
+      const namespace = metadata.namespace || "default"; // 確保 spec 包含 namespace 或提供預設值
+      const plural = "workflowtemplates"; // 替換為您的資源複數形式
+      const name = metadata.name;
+
       try {
-        await kubernetesObjectApi.read(spec as any);
-        console.log(`Resource ${(spec as any).metadata.name} exists, updating...`);
-        await kubernetesObjectApi.patch(spec as any);
+        // 嘗試獲取資源來確定是否存在
+        await customObjectsApi.getNamespacedCustomObject(group, version, namespace, plural, name);
+        console.log(`Resource ${name} exists, updating...`);
+        // 準備 PATCH 請求體和 Content-Type
+        const patchBody = [{ op: "replace", path: "/spec", value: (spec as any).spec }]; // 以 JSON Patch 為例
+        await customObjectsApi.patchNamespacedCustomObject(group, version, namespace, plural, name, patchBody, undefined, undefined, undefined, {
+          headers: { 'Content-Type': 'application/json-patch+json' } // 指定 Content-Type
+        });
       } catch (error) {
-        if ((error as any).response && (error as any).response.statusCode === 404) {
-          console.log(`Resource ${(spec as any).metadata.name} does not exist, creating...`); // Fix: Access 'metadata' property of 'spec'
-          await kubernetesObjectApi.create(spec as any); // Fix: Assert type of 'spec' to any
-        } else {
-          // 處理其他可能的錯誤
-          console.error(`Error processing resource ${(spec as any).metadata.name}:`, error); // Fix: Access 'metadata' property of 'spec'
-        }
+        console.log(`Resource ${name} does not exist, creating...`);
+        await customObjectsApi.createNamespacedCustomObject(group, version, namespace, plural, spec as object);
       }
     }
   }
