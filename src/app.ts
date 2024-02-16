@@ -8,32 +8,36 @@ import * as path from 'path';
 const app = express();
 const port = 3000;
 
-async function initKubeClient() {
+async function initKubeClients() {
   const kc = new KubeConfig();
   kc.loadFromDefault();
-  const client = KubernetesObjectApi.makeApiClient(kc);
-  return client;
+  const kubernetesObjectApi = KubernetesObjectApi.makeApiClient(kc);
+  const coreV1Api = kc.makeApiClient(CoreV1Api);
+  return { kubernetesObjectApi, coreV1Api };
 }
 
 
 async function applyYaml(filePath: string) {
-  const { kubernetesObjectApi, coreV1Api }  = await initKubeClient();
+  const { kubernetesObjectApi } = await initKubeClients();
+  const client = KubernetesObjectApi.makeApiClient(kubernetesObjectApi as any); // Add this line to initialize the 'client' variable
+
   const specString = await fs.readFile(filePath, 'utf8');
   const specs = yaml.loadAll(specString); // 假設您處理的是 V1Service 類型的對象
 
   for (const spec of specs) {
-    if (spec.metadata && typeof spec.metadata.name === 'string') {
+    if ((spec as any).metadata && typeof (spec as any).metadata.name === 'string') {
       try {
-        await client.read(spec);
-        console.log(`Resource ${spec.metadata.name} exists, updating...`);
-        await client.patch(spec);
+        await client.read(spec as any);
+        console.log(`Resource ${(spec as any).metadata.name} exists, updating...`);
+        await client.patch(spec as any);
       } catch (error) {
-        console.log(`Resource ${spec.metadata.name} does not exist, creating...`);
-        await client.create(spec);
+        console.log(`Resource ${(spec as any).metadata.name} does not exist, creating...`);
+        await client.create(spec as any);
       }
     }
   }
 }
+
 // upper part have some error, need to fix
 
 // 路由設定
@@ -67,7 +71,7 @@ app.get('/apply-workflows', async (req, res) => {
 });
 
 app.get('/list-services', async (req, res) => {
-  const { coreV1Api } = await initKubeClient();
+  const { coreV1Api } = await initKubeClients();
   try {
     const services = await coreV1Api.listNamespacedService('default');
     res.json(services.body.items.map((svc: any) => ({ name: svc.metadata?.name, labels: svc.metadata?.labels }))); // 為 svc 指定類型 V1Service
