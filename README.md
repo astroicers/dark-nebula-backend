@@ -1,5 +1,11 @@
 # Dark Nebula Backend
 
+> **⚠️ DEPRECATED** — 本專案已被 [Athena](https://github.com/astroicers/Athena) 取代。
+> Athena 採用全新架構（Python/FastAPI + Next.js + AI-driven OODA），涵蓋完整 Kill Chain 自動化。
+> 本 Repo 僅作為歷史存檔，不再維護。
+
+---
+
 This repository contains the Dockerized backend code for the Dark Nebula project.
 
 ## Quickstart
